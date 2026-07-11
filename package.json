@@ -1,0 +1,25 @@
+{
+  "name": "voiceflow-ai-voice-service",
+  "version": "0.1.0",
+  "description": "VoiceFlow AI - Phase 2 voice pipeline (Twilio + Gemini for STT/LLM/TTS orchestration)",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "nodemon --exec ts-node src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "pg": "^8.12.0",
+    "twilio": "^5.3.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.14.9",
+    "@types/pg": "^8.11.6",
+    "nodemon": "^3.1.4",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.3"
+  }
+}
