@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: voiceflow-ai-voice-service
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm install --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: VALIDATE_TWILIO_SIGNATURE
+        value: "true"
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: FOLLOWUP_CALLS_ENABLED
+        value: "false"
+      - key: FOLLOWUP_DELAY_MINUTES
+        value: "15"
+      - key: FOLLOWUP_POLL_MINUTES
+        value: "15"
