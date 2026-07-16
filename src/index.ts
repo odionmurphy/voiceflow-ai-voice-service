@@ -16,12 +16,6 @@ app.get('/health', (_req, res) =>
   res.json({ status: 'ok', service: 'voiceflow-ai-voice-service' })
 );
 
-// TEMPORARY - verifying Sentry actually receives events end-to-end. Remove once
-// confirmed.
-app.get('/debug/sentry-test', () => {
-  throw new Error('Sentry verification test error - voice-service');
-});
-
 app.use('/voice', voiceRoutes);
 
 // voice.ts's routes always catch their own errors internally (a call in progress needs
