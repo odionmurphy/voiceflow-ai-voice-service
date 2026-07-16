@@ -22,6 +22,24 @@ const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || 'http://localhost:4001';
 // (and therefore its configured language) have even been loaded.
 const DEFAULT_LANGUAGE = 'en-US';
 
+// Prepended to the opening greeting only (not every turn) - several jurisdictions
+// (e.g. California's bot-disclosure law, EU AI Act transparency rules) expect a caller
+// to be told up front they're talking to an AI, not a human.
+const AI_DISCLOSURE: Record<string, string> = {
+  'en-US': 'This call is handled by an AI assistant.',
+  'de-DE': 'Dieser Anruf wird von einem KI-Assistenten bearbeitet.',
+  'es-ES': 'Esta llamada la atiende un asistente de inteligencia artificial.',
+  'fr-FR': 'Cet appel est pris en charge par un assistant IA.',
+  'it-IT': 'Questa chiamata è gestita da un assistente IA.',
+  'pt-BR': 'Esta chamada é atendida por um assistente de IA.',
+  'nl-NL': 'Dit gesprek wordt afgehandeld door een AI-assistent.',
+};
+
+function withAiDisclosure(greeting: string, language: string) {
+  const disclosure = AI_DISCLOSURE[language] ?? AI_DISCLOSURE[DEFAULT_LANGUAGE];
+  return `${disclosure} ${greeting}`;
+}
+
 const NO_SPEECH_TEXT: Record<string, string> = {
   'en-US': "I didn't catch that. Goodbye for now.",
   'de-DE': 'Ich habe das nicht verstanden. Auf Wiederhören.',
@@ -119,8 +137,9 @@ router.post('/incoming', async (req, res) => {
       direction: 'inbound',
     });
 
+    const language = resolveLanguage(settings);
     res.type('text/xml');
-    res.send(sayAndGather(settings.greeting, resolveLanguage(settings)));
+    res.send(sayAndGather(withAiDisclosure(settings.greeting, language), language));
   } catch (err: any) {
     console.error('[voice/incoming] error:', err.message);
     Sentry.captureException(err);
@@ -168,7 +187,7 @@ router.post('/followup-connect', async (req, res) => {
     });
 
     res.type('text/xml');
-    res.send(sayAndGather(greeting, language));
+    res.send(sayAndGather(withAiDisclosure(greeting, language), language));
   } catch (err: any) {
     console.error('[voice/followup-connect] error:', err.message);
     Sentry.captureException(err);
