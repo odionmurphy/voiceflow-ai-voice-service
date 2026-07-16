@@ -30,3 +30,5 @@ services:
         value: "15"
       - key: FOLLOWUP_POLL_MINUTES
         value: "15"
+      - key: SENTRY_DSN
+        sync: false

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import twilio from 'twilio';
+import * as Sentry from '@sentry/node';
 import { getBusinessByPhoneNumber, getBusinessById, getAISettingsForBusiness } from '../services/business';
 import { findOrCreateCustomer } from '../services/customers';
 import { hasConflict, bookAppointment } from '../services/appointments';
@@ -122,6 +123,7 @@ router.post('/incoming', async (req, res) => {
     res.send(sayAndGather(settings.greeting, resolveLanguage(settings)));
   } catch (err: any) {
     console.error('[voice/incoming] error:', err.message);
+    Sentry.captureException(err);
     res.type('text/xml');
     res.send(sayAndHangup('Sorry, something went wrong. Please try again later.'));
   }
@@ -169,6 +171,7 @@ router.post('/followup-connect', async (req, res) => {
     res.send(sayAndGather(greeting, language));
   } catch (err: any) {
     console.error('[voice/followup-connect] error:', err.message);
+    Sentry.captureException(err);
     res.type('text/xml');
     res.send(sayAndHangup('Sorry, something went wrong. Goodbye.'));
   }
@@ -249,7 +252,10 @@ router.post('/gather', async (req, res) => {
         'New appointment booked by AI',
         `${customer.full_name} - ${result.booking.serviceName || 'Appointment'} on ${start.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`,
         { appointmentId: appointment.id }
-      ).catch((err) => console.error('[voice/gather] push send failed:', err.message));
+      ).catch((err) => {
+        console.error('[voice/gather] push send failed:', err.message);
+        Sentry.captureException(err);
+      });
 
       res.type('text/xml');
       return res.send(sayAndHangup(result.say, language));
@@ -264,6 +270,7 @@ router.post('/gather', async (req, res) => {
     res.send(sayAndGather(result.say, language));
   } catch (err: any) {
     console.error('[voice/gather] error:', err.message);
+    Sentry.captureException(err);
     res.type('text/xml');
     res.send(sayAndHangup('Sorry, something went wrong on my end. Goodbye.'));
   }
@@ -325,6 +332,7 @@ router.post('/status', async (req, res) => {
     });
   } catch (err: any) {
     console.error('[voice/status] failed to log call:', err.message);
+    Sentry.captureException(err);
   } finally {
     deleteConversation(callSid);
   }

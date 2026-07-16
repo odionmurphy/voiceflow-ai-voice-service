@@ -1,9 +1,9 @@
+import './instrument';
+
 import express from 'express';
-import dotenv from 'dotenv';
+import * as Sentry from '@sentry/node';
 import voiceRoutes from './routes/voice';
 import { startFollowupScheduler } from './jobs/followups';
-
-dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 4001;
@@ -17,6 +17,12 @@ app.get('/health', (_req, res) =>
 );
 
 app.use('/voice', voiceRoutes);
+
+// voice.ts's routes always catch their own errors internally (a call in progress needs
+// *some* valid TwiML response, never a raw 500), so they call Sentry.captureException
+// directly rather than relying on this - this only catches genuinely unexpected
+// failures outside that pattern (e.g. in middleware).
+Sentry.setupExpressErrorHandler(app);
 
 app.use((req, res) => {
   res.status(404).json({ error: `Route not found: ${req.method} ${req.originalUrl}` });
