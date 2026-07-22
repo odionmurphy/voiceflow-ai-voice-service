@@ -13,9 +13,14 @@ import {
 } from '../services/conversationStore';
 import { getNextConversationTurn, generateCallSummary, resolveLanguage } from '../services/gemini';
 import { sendPushToBusinessMembers } from '../services/push';
+import { requireTwilioSignature } from '../middleware/twilioSignature';
 
 const router = Router();
 const VoiceResponse = twilio.twiml.VoiceResponse;
+
+// Every route in this file is a Twilio webhook - reject anything without a valid
+// X-Twilio-Signature up front (no-op when VALIDATE_TWILIO_SIGNATURE isn't "true").
+router.use(requireTwilioSignature);
 
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || 'http://localhost:4001';
 // Fallback for the handful of error paths that can fire before a business's AI settings
