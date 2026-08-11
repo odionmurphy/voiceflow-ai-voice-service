@@ -338,7 +338,6 @@ router.post("/gather", async (req, res) => {
     ];
     const result = await getNextConversationTurn(business, settings, turns);
    
-console.log('[DEBUG] Gemini result:', JSON.stringify(result, null, 2));
     turns.push({ role: "assistant", text: result.say });
 
     updateConversation(callSid, { turns, intent: result.intent });
