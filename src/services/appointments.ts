@@ -18,6 +18,17 @@ export interface AppointmentRecord {
   status: string;
 }
 
+export class SlotTakenError extends Error {
+  constructor() {
+    super("Time slot overlaps an existing appointment");
+    this.name = "SlotTakenError";
+  }
+}
+
+function isOverlapError(err: unknown): boolean {
+  return (err as { code?: string })?.code === "23P01";
+}
+
 export async function hasConflict(
   businessId: string,
   startTime: string,
@@ -67,12 +78,18 @@ export async function bookAppointment(input: BookAppointmentInput) {
     price = priceResult.rows[0]?.price ?? null;
   }
 
-  const result = await query(
-    `INSERT INTO appointments (business_id, customer_id, service_name, price, start_time, end_time, source, status)
-     VALUES ($1, $2, $3, $4, $5, $6, 'ai_call', 'confirmed')
-     RETURNING *`,
-    [businessId, customerId, serviceName || null, price, startTime, endTime],
-  );
+  let result;
+  try {
+    result = await query(
+      `INSERT INTO appointments (business_id, customer_id, service_name, price, start_time, end_time, source, status)
+       VALUES ($1, $2, $3, $4, $5, $6, 'ai_call', 'confirmed')
+       RETURNING *`,
+      [businessId, customerId, serviceName || null, price, startTime, endTime],
+    );
+  } catch (err) {
+    if (isOverlapError(err)) throw new SlotTakenError();
+    throw err;
+  }
 
   await query("UPDATE customers SET last_visit_at = $1 WHERE id = $2", [
     startTime,
@@ -101,13 +118,18 @@ export async function rescheduleAppointment(
   startTime: string,
   endTime: string,
 ) {
-  return query(
-    `UPDATE appointments
-     SET start_time = $2, end_time = $3, updated_at = now()
-     WHERE id = $1
-     RETURNING *`,
-    [appointmentId, startTime, endTime],
-  );
+  try {
+    return await query(
+      `UPDATE appointments
+       SET start_time = $2, end_time = $3, updated_at = now()
+       WHERE id = $1
+       RETURNING *`,
+      [appointmentId, startTime, endTime],
+    );
+  } catch (err) {
+    if (isOverlapError(err)) throw new SlotTakenError();
+    throw err;
+  }
 }
 
 export async function cancelAppointment(appointmentId: string) {

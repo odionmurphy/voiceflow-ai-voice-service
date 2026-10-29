@@ -17,9 +17,11 @@ import {
   getUpcomingAppointmentsForCustomer,
   rescheduleAppointment,
   cancelAppointment,
+  SlotTakenError,
   type AppointmentRecord,
 } from "../services/appointments";
 import { logCall } from "../services/calls";
+import { zonedToUtcDate, formatInZone } from "../utils/time";
 import {
   createConversation,
   getConversation,
@@ -84,6 +86,7 @@ function getReturningCustomerGreeting(customerName: string, language: string) {
     RETURNING_CUSTOMER_GREETING[DEFAULT_LANGUAGE];
   return formatter(customerName);
 }
+
 const MULTI_APPOINTMENT_CLARIFICATION: Record<
   string,
   (count: number, action: "reschedule" | "cancel", choices: string) => string
@@ -91,22 +94,22 @@ const MULTI_APPOINTMENT_CLARIFICATION: Record<
   "en-US": (count, action, choices) =>
     `I found ${count} upcoming appointments. Please pick which one you want to ${action} by number or date and time: ${choices}`,
   "de-DE": (count, action, choices) =>
-    `Ich habe ${count} bevorstehende Termine gefunden. Bitte sagen Sie mir, welchen Sie ${action === "reschedule" ? "verschieben" : "stornieren"} möchten — nennen Sie die Nummer oder Datum und Uhrzeit: ${choices}`
+    `Ich habe ${count} bevorstehende Termine gefunden. Bitte sagen Sie mir, welchen Sie ${action === "reschedule" ? "verschieben" : "stornieren"} möchten — nennen Sie die Nummer oder Datum und Uhrzeit: ${choices}`,
 };
 
 function buildMultiAppointmentClarificationText(
   appointments: AppointmentRecord[],
   action: "reschedule" | "cancel",
   language: string,
+  timezone: string,
 ) {
   const choices = appointments
     .map((appointment, index) => {
-      const when = new Date(appointment.start_time).toLocaleString([], {
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
+      const when = formatInZone(
+        appointment.start_time,
+        timezone,
+        language.slice(0, 2),
+      );
       return `${index + 1}. ${when}`;
     })
     .join(" | ");
@@ -332,12 +335,15 @@ router.post("/gather", async (req, res) => {
 
     const language = resolveLanguage(settings);
     const responseLanguage = detectLanguageFromText(speechResult, language);
+    // Dates the caller speaks ("Monday at 3pm") are read in the business's own timezone,
+    // never the server's (Render runs in UTC, which would shift every booking by 1-2h).
+    const timezone = business.timezone || "Europe/Berlin";
     const turns = [
       ...conversation.turns,
       { role: "caller" as const, text: speechResult },
     ];
     const result = await getNextConversationTurn(business, settings, turns);
-   
+
     turns.push({ role: "assistant", text: result.say });
 
     updateConversation(callSid, { turns, intent: result.intent });
@@ -352,12 +358,10 @@ router.post("/gather", async (req, res) => {
       );
       const durationMinutes = service?.durationMinutes ?? 60;
 
-      // NOTE: constructs the time using this server's local timezone. Fine when this
-      // service runs in the same timezone as the business (typical for a single-region
-      // MVP). For multi-region use, swap in a proper timezone library (e.g. luxon) using
-      // business.timezone.
-      const start = new Date(
-        `${result.booking.date}T${result.booking.time}:00`,
+      const start = zonedToUtcDate(
+        result.booking.date,
+        result.booking.time,
+        timezone,
       );
       const end = new Date(start.getTime() + durationMinutes * 60000);
 
@@ -382,20 +386,35 @@ router.post("/gather", async (req, res) => {
         result.booking.customerName,
       );
 
-      const appointment = await bookAppointment({
-        businessId: conversation.businessId,
-        customerId: customer.id,
-        serviceName: result.booking.serviceName,
-        startTime: start.toISOString(),
-        endTime: end.toISOString(),
-      });
+      // The pre-check above covers the normal case; the database's overlap constraint
+      // catches two calls grabbing the same slot at the same moment.
+      let appointment: Awaited<ReturnType<typeof bookAppointment>>;
+      try {
+        appointment = await bookAppointment({
+          businessId: conversation.businessId,
+          customerId: customer.id,
+          serviceName: result.booking.serviceName,
+          startTime: start.toISOString(),
+          endTime: end.toISOString(),
+        });
+      } catch (err) {
+        if (err instanceof SlotTakenError) {
+          const retryText =
+            TIME_TAKEN_TEXT[language] ?? TIME_TAKEN_TEXT[DEFAULT_LANGUAGE];
+          turns[turns.length - 1] = { role: "assistant", text: retryText };
+          updateConversation(callSid, { turns });
+          res.type("text/xml");
+          return res.send(sayAndGather(retryText, language));
+        }
+        throw err;
+      }
 
       updateConversation(callSid, { resultedInAppointmentId: appointment.id });
 
       sendPushToBusinessMembers(
         conversation.businessId,
         "New appointment booked by AI",
-        `${customer.full_name} - ${result.booking.serviceName || "Appointment"} on ${start.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}`,
+        `${customer.full_name} - ${result.booking.serviceName || "Appointment"} on ${formatInZone(start, timezone)}`,
         { appointmentId: appointment.id },
       ).catch((err) => {
         console.error("[voice/gather] push send failed:", err.message);
@@ -439,6 +458,7 @@ router.post("/gather", async (req, res) => {
           upcomingAppointments,
           "reschedule",
           responseLanguage,
+          timezone,
         );
         turns[turns.length - 1] = { role: "assistant", text: optionsText };
         updateConversation(callSid, { turns });
@@ -455,8 +475,10 @@ router.post("/gather", async (req, res) => {
       }
 
       const target = upcomingAppointments[0];
-      const start = new Date(
-        `${result.booking.date}T${result.booking.time}:00`,
+      const start = zonedToUtcDate(
+        result.booking.date,
+        result.booking.time,
+        timezone,
       );
       const end = new Date(start.getTime() + 60 * 60000);
       const conflict = await hasConflictExcludingAppointment(
@@ -475,11 +497,24 @@ router.post("/gather", async (req, res) => {
         return res.send(sayAndGather(retryText, language));
       }
 
-      const updatedAppointment = await rescheduleAppointment(
-        target.id,
-        start.toISOString(),
-        end.toISOString(),
-      );
+      try {
+        await rescheduleAppointment(
+          target.id,
+          start.toISOString(),
+          end.toISOString(),
+        );
+      } catch (err) {
+        if (err instanceof SlotTakenError) {
+          const retryText =
+            TIME_TAKEN_TEXT[language] ?? TIME_TAKEN_TEXT[DEFAULT_LANGUAGE];
+          turns[turns.length - 1] = { role: "assistant", text: retryText };
+          updateConversation(callSid, { turns });
+          res.type("text/xml");
+          return res.send(sayAndGather(retryText, language));
+        }
+        throw err;
+      }
+
       updateConversation(callSid, { resultedInAppointmentId: target.id });
       res.type("text/xml");
       return res.send(sayAndHangup(result.say, language));
@@ -518,6 +553,7 @@ router.post("/gather", async (req, res) => {
           upcomingAppointments,
           "cancel",
           responseLanguage,
+          timezone,
         );
         turns[turns.length - 1] = { role: "assistant", text: optionsText };
         updateConversation(callSid, { turns });
@@ -526,7 +562,7 @@ router.post("/gather", async (req, res) => {
       }
 
       const target = upcomingAppointments[0];
-      const cancelledAppointment = await cancelAppointment(target.id);
+      await cancelAppointment(target.id);
       updateConversation(callSid, { resultedInAppointmentId: target.id });
       res.type("text/xml");
       return res.send(sayAndHangup(result.say, language));
