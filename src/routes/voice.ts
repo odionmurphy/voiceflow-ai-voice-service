@@ -5,6 +5,7 @@ import {
   getBusinessByPhoneNumber,
   getBusinessById,
   getAISettingsForBusiness,
+  admitInboundCall,
 } from "../services/business";
 import {
   findCustomerByPhoneNumber,
@@ -219,6 +220,16 @@ router.post("/incoming", async (req, res) => {
       res.type("text/xml");
       return res.send(
         sayAndHangup("Sorry, this business is not fully set up yet. Goodbye."),
+      );
+    }
+
+    const admitted = await admitInboundCall(callSid, business.id, from);
+    if (!admitted) {
+      res.type("text/xml");
+      return res.send(
+        sayAndHangup(
+          "Sorry, this business is unable to take more calls right now. Please contact the business directly."
+        )
       );
     }
 
@@ -627,6 +638,7 @@ router.post("/status", async (req, res) => {
       finalStatus === "completed";
 
     await logCall({
+      callSid,
       businessId: conversation.businessId,
       customerId: customerLookup?.id ?? null,
       callerNumber: conversation.callerNumber,
@@ -640,6 +652,7 @@ router.post("/status", async (req, res) => {
       resultedInAppointmentId: conversation.resultedInAppointmentId,
       needsFollowup,
       direction: conversation.direction,
+      quotaReserved: conversation.direction === "inbound",
     });
   } catch (err: any) {
     console.error("[voice/status] failed to log call:", err.message);

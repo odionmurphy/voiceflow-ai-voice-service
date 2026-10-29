@@ -4,17 +4,41 @@ import express from 'express';
 import * as Sentry from '@sentry/node';
 import voiceRoutes from './routes/voice';
 import { startFollowupScheduler } from './jobs/followups';
+import { pool } from './config/db';
 
 const app = express();
 const PORT = process.env.PORT || 4001;
 
-// Twilio webhooks send application/x-www-form-urlencoded bodies, not JSON.
-app.use(express.urlencoded({ extended: false }));
-app.use(express.json());
+if (process.env.NODE_ENV === 'production') {
+  const required = ['DATABASE_URL', 'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'GEMINI_API_KEY', 'PUBLIC_BASE_URL'];
+  const missing = required.filter((key) => !process.env[key]);
+  if (missing.length) {
+    throw new Error(`Missing required voice-service production configuration: ${missing.join(', ')}`);
+  }
+  if (process.env.VALIDATE_TWILIO_SIGNATURE !== 'true') {
+    throw new Error('VALIDATE_TWILIO_SIGNATURE=true is required in production');
+  }
+  if (!process.env.PUBLIC_BASE_URL?.startsWith('https://')) {
+    throw new Error('Production PUBLIC_BASE_URL must use HTTPS');
+  }
+  if (process.env.PUBLIC_BASE_URL.endsWith('/')) {
+    throw new Error('Production PUBLIC_BASE_URL must not end with a slash');
+  }
+}
 
-app.get('/health', (_req, res) =>
-  res.json({ status: 'ok', service: 'voiceflow-ai-voice-service' })
-);
+// Twilio webhooks send application/x-www-form-urlencoded bodies, not JSON.
+app.use(express.urlencoded({ extended: false, limit: '64kb' }));
+app.use(express.json({ limit: '1mb' }));
+
+app.get('/health', async (_req, res) => {
+  try {
+    await pool.query('SELECT 1');
+    res.json({ status: 'ok', service: 'voiceflow-ai-voice-service' });
+  } catch (err) {
+    console.error('[health] database check failed:', err);
+    res.status(503).json({ status: 'unavailable', service: 'voiceflow-ai-voice-service' });
+  }
+});
 
 app.use('/voice', voiceRoutes);
 
