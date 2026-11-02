@@ -3,11 +3,14 @@ import './instrument';
 import express from 'express';
 import * as Sentry from '@sentry/node';
 import voiceRoutes from './routes/voice';
+import widgetRoutes from './routes/widget';
 import { startFollowupScheduler } from './jobs/followups';
 import { pool } from './config/db';
 
 const app = express();
 const PORT = process.env.PORT || 4001;
+
+app.set('trust proxy', 3);
 
 if (process.env.NODE_ENV === 'production') {
   const required = ['DATABASE_URL', 'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'GEMINI_API_KEY', 'PUBLIC_BASE_URL'];
@@ -41,6 +44,7 @@ app.get('/health', async (_req, res) => {
 });
 
 app.use('/voice', voiceRoutes);
+app.use('/widget', widgetRoutes);
 
 // voice.ts's routes always catch their own errors internally (a call in progress needs
 // *some* valid TwiML response, never a raw 500), so they call Sentry.captureException

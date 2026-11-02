@@ -20,6 +20,7 @@ export interface AISettingsRow {
     notifyEmail?: string;
     privacyPolicyUrl?: string;
     language?: string;
+    websiteDomains?: string[];
   };
 }
 
