@@ -9,6 +9,7 @@ export interface Business {
 
 export interface AISettingsRow {
   greeting: string;
+  voice_id: string;
   services: { name: string; durationMinutes: number; price: number }[];
   faq: { question: string; answer: string }[];
   booking_rules: {

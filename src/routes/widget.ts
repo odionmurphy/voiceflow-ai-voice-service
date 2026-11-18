@@ -22,7 +22,7 @@ async function widgetAccess(req: Request, res: Response, next: NextFunction) {
   }
   const result = await query(
     `SELECT b.id, b.name, b.timezone, b.business_hours,
-            a.greeting, a.services, a.faq, a.booking_rules, s.status AS subscription_status
+            a.greeting, a.voice_id, a.services, a.faq, a.booking_rules, s.status AS subscription_status
      FROM businesses b
      JOIN ai_settings a ON a.business_id = b.id
      JOIN subscriptions s ON s.business_id = b.id
@@ -33,6 +33,7 @@ async function widgetAccess(req: Request, res: Response, next: NextFunction) {
   const settings: AISettingsRow | null = row
     ? {
         greeting: row.greeting,
+        voice_id: row.voice_id,
         services: row.services ?? [],
         faq: row.faq ?? [],
         booking_rules: row.booking_rules ?? {},

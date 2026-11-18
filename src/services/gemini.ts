@@ -33,6 +33,13 @@ const LANGUAGE_NAMES: Record<string, string> = {
   "nl-NL": "Dutch",
 };
 
+const PERSONALITY_INSTRUCTIONS: Record<string, string> = {
+  maya: "Use a warm, natural, and reassuring tone. Sound genuinely interested without being overly familiar or scripted.",
+  mike: "Use a direct, grounded, and confident tone. Be concise and clear without sounding abrupt.",
+  lena: "Use a calm, patient, and reassuring tone. Give callers room to explain, especially when they seem uncertain.",
+  alex: "Use a bright, positive, and energetic tone while remaining professional and never pushy.",
+};
+
 // The language code stored in booking_rules also drives Twilio's <Say>/<Gather> voice
 // (see routes/voice.ts) - keep this and that in sync so the AI's text and Twilio's
 // spoken/recognized language always match.
@@ -108,6 +115,9 @@ function buildSystemPrompt(
 ): string {
   const assistantName =
     settings.booking_rules?.assistantName || "the assistant";
+  const personality =
+    PERSONALITY_INSTRUCTIONS[settings.voice_id] ??
+    "Use a friendly, professional, and natural tone.";
   const today = new Date().toISOString().slice(0, 10);
   const languageName = LANGUAGE_NAMES[resolveLanguage(settings)];
 
@@ -129,6 +139,8 @@ be written in the same language as the caller's latest message whenever the call
 supported language. If the caller speaks in German, answer in German. If the caller speaks in
 English, answer in English. If the caller speaks in another supported language, answer in that
 same language. Only fall back to ${languageName} when the caller's language is unclear.
+
+Conversational personality: ${personality} Keep all business, booking, and safety rules unchanged.
 
 Your job on this call: understand why the caller is calling, and if they want to book an
 appointment, collect their name, which service they want, and a preferred date and time,

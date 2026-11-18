@@ -1,5 +1,6 @@
 import { Router } from "express";
 import twilio from "twilio";
+import type TwilioVoiceResponse from "twilio/lib/twiml/VoiceResponse";
 import * as Sentry from "@sentry/node";
 import {
   getBusinessByPhoneNumber,
@@ -49,6 +50,52 @@ const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "http://localhost:4001";
 // Fallback for the handful of error paths that can fire before a business's AI settings
 // (and therefore its configured language) have even been loaded.
 const DEFAULT_LANGUAGE = "en-US";
+
+const GOOGLE_VOICES = {
+  "en-US": {
+    female: "Google.en-US-Neural2-F",
+    male: "Google.en-US-Neural2-D",
+  },
+  "de-DE": {
+    female: "Google.de-DE-Neural2-A",
+    male: "Google.de-DE-Neural2-B",
+  },
+  "es-ES": {
+    female: "Google.es-ES-Neural2-A",
+    male: "Google.es-ES-Neural2-C",
+  },
+  "fr-FR": {
+    female: "Google.fr-FR-Neural2-A",
+    male: "Google.fr-FR-Neural2-B",
+  },
+  "it-IT": {
+    female: "Google.it-IT-Neural2-A",
+    male: "Google.it-IT-Neural2-C",
+  },
+  "pt-BR": {
+    female: "Google.pt-BR-Neural2-A",
+    male: "Google.pt-BR-Neural2-B",
+  },
+  "nl-NL": {
+    female: "Google.nl-NL-Wavenet-A",
+    male: "Google.nl-NL-Wavenet-B",
+  },
+} satisfies Record<
+  string,
+  {
+    female: TwilioVoiceResponse.SayAttributes["voice"];
+    male: TwilioVoiceResponse.SayAttributes["voice"];
+  }
+>;
+
+function getVoice(language: string, voiceId = "default") {
+  const voices =
+    GOOGLE_VOICES[language as keyof typeof GOOGLE_VOICES] ??
+    GOOGLE_VOICES[DEFAULT_LANGUAGE];
+  return voiceId === "mike" || voiceId === "alex"
+    ? voices.male
+    : voices.female;
+}
 
 // Prepended to the opening greeting only (not every turn) - several jurisdictions
 // (e.g. California's bot-disclosure law, EU AI Act transparency rules) expect a caller
@@ -174,14 +221,22 @@ const FOLLOWUP_GREETING: Record<
 // codes in gemini.ts's LANGUAGE_NAMES map, all of which are valid Twilio language codes,
 // so the cast here is safe - it's a type-system mismatch between two Twilio enums, not a
 // runtime concern.
-function sayAndHangup(text: string, language: string = DEFAULT_LANGUAGE) {
+function sayAndHangup(
+  text: string,
+  language: string = DEFAULT_LANGUAGE,
+  voiceId = "default",
+) {
   const twiml = new VoiceResponse();
-  twiml.say({ language: language as any }, text);
+  twiml.say({ language: language as any, voice: getVoice(language, voiceId) }, text);
   twiml.hangup();
   return twiml.toString();
 }
 
-function sayAndGather(text: string, language: string = DEFAULT_LANGUAGE) {
+function sayAndGather(
+  text: string,
+  language: string = DEFAULT_LANGUAGE,
+  voiceId = "default",
+) {
   const twiml = new VoiceResponse();
   const gather = twiml.gather({
     input: ["speech"],
@@ -190,10 +245,10 @@ function sayAndGather(text: string, language: string = DEFAULT_LANGUAGE) {
     speechTimeout: "auto",
     language: language as any,
   });
-  gather.say({ language: language as any }, text);
+  gather.say({ language: language as any, voice: getVoice(language, voiceId) }, text);
   // If Twilio's Gather times out with no speech at all, it falls through to here.
   twiml.say(
-    { language: language as any },
+    { language: language as any, voice: getVoice(language, voiceId) },
     NO_SPEECH_TEXT[language] ?? NO_SPEECH_TEXT[DEFAULT_LANGUAGE],
   );
   twiml.hangup();
@@ -253,7 +308,11 @@ router.post("/incoming", async (req, res) => {
 
     res.type("text/xml");
     res.send(
-      sayAndGather(withAiDisclosure(openingGreeting, language), language),
+      sayAndGather(
+        withAiDisclosure(openingGreeting, language),
+        language,
+        settings.voice_id,
+      ),
     );
   } catch (err: any) {
     console.error("[voice/incoming] error:", err.message);
@@ -306,7 +365,13 @@ router.post("/followup-connect", async (req, res) => {
     });
 
     res.type("text/xml");
-    res.send(sayAndGather(withAiDisclosure(greeting, language), language));
+    res.send(
+      sayAndGather(
+        withAiDisclosure(greeting, language),
+        language,
+        settings.voice_id,
+      ),
+    );
   } catch (err: any) {
     console.error("[voice/followup-connect] error:", err.message);
     Sentry.captureException(err);
@@ -345,6 +410,7 @@ router.post("/gather", async (req, res) => {
     }
 
     const language = resolveLanguage(settings);
+    const voiceId = settings.voice_id || "default";
     const responseLanguage = detectLanguageFromText(speechResult, language);
     // Dates the caller speaks ("Monday at 3pm") are read in the business's own timezone,
     // never the server's (Render runs in UTC, which would shift every booking by 1-2h).
@@ -388,7 +454,7 @@ router.post("/gather", async (req, res) => {
         turns[turns.length - 1] = { role: "assistant", text: retryText };
         updateConversation(callSid, { turns });
         res.type("text/xml");
-        return res.send(sayAndGather(retryText, language));
+        return res.send(sayAndGather(retryText, language, voiceId));
       }
 
       const customer = await findOrCreateCustomer(
@@ -415,7 +481,7 @@ router.post("/gather", async (req, res) => {
           turns[turns.length - 1] = { role: "assistant", text: retryText };
           updateConversation(callSid, { turns });
           res.type("text/xml");
-          return res.send(sayAndGather(retryText, language));
+          return res.send(sayAndGather(retryText, language, voiceId));
         }
         throw err;
       }
@@ -433,7 +499,7 @@ router.post("/gather", async (req, res) => {
       });
 
       res.type("text/xml");
-      return res.send(sayAndHangup(result.say, language));
+      return res.send(sayAndHangup(result.say, language, voiceId));
     }
 
     if (result.action === "reschedule_appointment") {
@@ -447,7 +513,7 @@ router.post("/gather", async (req, res) => {
         turns[turns.length - 1] = { role: "assistant", text: fallbackText };
         updateConversation(callSid, { turns });
         res.type("text/xml");
-        return res.send(sayAndGather(fallbackText, language));
+        return res.send(sayAndGather(fallbackText, language, voiceId));
       }
 
       const upcomingAppointments = await getUpcomingAppointmentsForCustomer(
@@ -461,7 +527,7 @@ router.post("/gather", async (req, res) => {
         turns[turns.length - 1] = { role: "assistant", text: fallbackText };
         updateConversation(callSid, { turns });
         res.type("text/xml");
-        return res.send(sayAndGather(fallbackText, language));
+        return res.send(sayAndGather(fallbackText, language, voiceId));
       }
 
       if (upcomingAppointments.length > 1) {
@@ -474,7 +540,7 @@ router.post("/gather", async (req, res) => {
         turns[turns.length - 1] = { role: "assistant", text: optionsText };
         updateConversation(callSid, { turns });
         res.type("text/xml");
-        return res.send(sayAndGather(optionsText, responseLanguage));
+        return res.send(sayAndGather(optionsText, responseLanguage, voiceId));
       }
 
       if (!result.booking?.date || !result.booking?.time) {
@@ -482,7 +548,7 @@ router.post("/gather", async (req, res) => {
         turns[turns.length - 1] = { role: "assistant", text: fallbackText };
         updateConversation(callSid, { turns });
         res.type("text/xml");
-        return res.send(sayAndGather(fallbackText, language));
+        return res.send(sayAndGather(fallbackText, language, voiceId));
       }
 
       const target = upcomingAppointments[0];
@@ -505,7 +571,7 @@ router.post("/gather", async (req, res) => {
         turns[turns.length - 1] = { role: "assistant", text: retryText };
         updateConversation(callSid, { turns });
         res.type("text/xml");
-        return res.send(sayAndGather(retryText, language));
+        return res.send(sayAndGather(retryText, language, voiceId));
       }
 
       try {
@@ -521,14 +587,14 @@ router.post("/gather", async (req, res) => {
           turns[turns.length - 1] = { role: "assistant", text: retryText };
           updateConversation(callSid, { turns });
           res.type("text/xml");
-          return res.send(sayAndGather(retryText, language));
+          return res.send(sayAndGather(retryText, language, voiceId));
         }
         throw err;
       }
 
       updateConversation(callSid, { resultedInAppointmentId: target.id });
       res.type("text/xml");
-      return res.send(sayAndHangup(result.say, language));
+      return res.send(sayAndHangup(result.say, language, voiceId));
     }
 
     if (result.action === "cancel_appointment") {
@@ -542,7 +608,7 @@ router.post("/gather", async (req, res) => {
         turns[turns.length - 1] = { role: "assistant", text: fallbackText };
         updateConversation(callSid, { turns });
         res.type("text/xml");
-        return res.send(sayAndGather(fallbackText, language));
+        return res.send(sayAndGather(fallbackText, language, voiceId));
       }
 
       const upcomingAppointments = await getUpcomingAppointmentsForCustomer(
@@ -556,7 +622,7 @@ router.post("/gather", async (req, res) => {
         turns[turns.length - 1] = { role: "assistant", text: fallbackText };
         updateConversation(callSid, { turns });
         res.type("text/xml");
-        return res.send(sayAndGather(fallbackText, language));
+        return res.send(sayAndGather(fallbackText, language, voiceId));
       }
 
       if (upcomingAppointments.length > 1) {
@@ -569,23 +635,23 @@ router.post("/gather", async (req, res) => {
         turns[turns.length - 1] = { role: "assistant", text: optionsText };
         updateConversation(callSid, { turns });
         res.type("text/xml");
-        return res.send(sayAndGather(optionsText, responseLanguage));
+        return res.send(sayAndGather(optionsText, responseLanguage, voiceId));
       }
 
       const target = upcomingAppointments[0];
       await cancelAppointment(target.id);
       updateConversation(callSid, { resultedInAppointmentId: target.id });
       res.type("text/xml");
-      return res.send(sayAndHangup(result.say, language));
+      return res.send(sayAndHangup(result.say, language, voiceId));
     }
 
     if (result.action === "end_call") {
       res.type("text/xml");
-      return res.send(sayAndHangup(result.say, language));
+      return res.send(sayAndHangup(result.say, language, voiceId));
     }
 
     res.type("text/xml");
-    res.send(sayAndGather(result.say, responseLanguage));
+    res.send(sayAndGather(result.say, responseLanguage, voiceId));
   } catch (err: any) {
     console.error("[voice/gather] error:", err.message);
     Sentry.captureException(err);
